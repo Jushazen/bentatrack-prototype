@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Product · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // One product: details, price and stock, restock form, and its recent stock changes.
+      // The owner also sees the purchase price and supplier, and can archive the product.
+      const { esc, peso, icon, when } = App;
+      const product = App.product(App.params().get("id")) || PRODUCTS[0];
+
+      function row(label, value) {
+        return `<div><dt>${label}</dt><dd>${value}</dd></div>`;
+      }
+
+      function render() {
+        const owner = App.role() === "OWNER";
+        const p = product;
+        const history = App.inventoryLog().filter((e) => e.productId === p.id).slice(0, 5);
+
+        return `<div class="page">
+          <div>
+            <a class="back-link" href="products.html">${icon("arrowLeft", "icon-sm")}<span>All products</span></a>
+            <div class="page-head">
+              <div>
+                <h1>${esc(p.name)}</h1>
+                <p class="sub">${p.code} · ${p.category}</p>
+                <p class="badges" style="margin-top:8px"><span id="status-badge">${App.statusBadge(p)}</span>${p.archived ? '<span class="badge">Archived</span>' : ""}${owner && p.cost === null ? '<span class="badge warn">Needs cost</span>' : ""}</p>
+              </div>
+              <a class="btn btn-secondary" href="product-form.html?id=${p.id}">${icon("pencil", "icon-sm")}<span>Edit product</span></a>
+            </div>
+          </div>
+
+          <div class="grid-2" style="align-items:start">
+            <div class="stack">
+              <section class="card">
+                <h2>Price and stock</h2>
+                <dl class="details">
+                  ${row("Selling price", peso(p.price))}
+                  ${owner ? row("Purchase price", p.cost === null ? '<span class="text-warn">Not set yet</span>' : peso(p.cost)) : ""}
+                  ${owner ? row("Supplier", esc(App.supplierName(p.supplier))) : ""}
+                  ${row("In stock", `<span id="stock-value">${p.stock}</span>`)}
+                  ${row("Low stock threshold", p.threshold)}
+                </dl>
+              </section>
+              <section class="card">
+                <h2>Details</h2>
+                <dl class="details">
+                  ${row("Barcode", p.barcode || "None")}
+                  ${row("Brand", p.brand ? esc(p.brand) : "None")}
+                  ${row("Expiration date", p.expires ? new Date(p.expires).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" }) : "None")}
+                  ${row("Date added", new Date(p.added).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" }))}
+                </dl>
+              </section>
+            </div>
+
+            <div class="stack">
+              ${
+                p.archived
+                  ? `<section class="card"><h2>Archived</h2><p class="muted" style="margin-top:4px">This product is discontinued, so it is hidden from selling and search. ${owner ? "Restore it below to sell it again." : "Only the owner can restore it."}</p></section>`
+                  : `<section class="card">
+                <h2>Restock</h2>
+                <p class="muted small" style="margin:4px 0 12px">Add units you received. The change is logged in Inventory history.</p>
+                <form id="restock" class="form-grid" novalidate>
+                  <div class="field">
+                    <label class="label" for="qty">Quantity received</label>
+                    <input class="input" id="qty" inputmode="numeric" placeholder="e.g. 10" />
+                    <p class="error" id="qty-error" hidden></p>
+                  </div>
+                  <div class="field">
+                    <label class="label" for="note">Note <span class="optional">(optional)</span></label>
+                    <input class="input" id="note" placeholder="e.g. Delivery from supplier" />
+                  </div>
+                  <button type="submit" class="btn btn-primary">${icon("packagePlus", "icon-sm")}<span>Restock</span></button>
+                </form>
+              </section>`
+              }
+
+              <section class="card">
+                <div class="card-head"><h2>Recent stock changes</h2><a class="btn btn-ghost btn-sm" href="inventory-history.html?product=${p.id}"><span>View history</span>${icon("arrowRight", "icon-sm")}</a></div>
+                ${
+                  history.length
+                    ? `<ul class="rows">${history
+                        .map(
+                          (e) => `<li class="row-link" style="margin:0">
+                          <span class="main"><span class="title">${typeLabel(e.type)} <span class="num ${e.delta > 0 ? "text-ok" : ""}">${e.delta > 0 ? "+" : ""}${e.delta}</span></span>
+                          <span class="meta">${when(e.day, e.time)} · ${esc(App.userName(e.by))}</span></span>
+                          <span class="end muted small">${e.stockAfter} left</span></li>`,
+                        )
+                        .join("")}</ul>`
+                    : `<p class="muted">No changes yet.</p>`
+                }
+              </section>
+
+              ${
+                owner && p.archived
+                  ? `<section class="card">
+                      <h2>Restore</h2>
+                      <p class="muted small" style="margin:4px 0 12px">Bring this product back for selling and search, with its stock and history.</p>
+                      <button type="button" class="btn btn-secondary" id="restore">${icon("undo", "icon-sm")}<span>Restore product</span></button>
+                    </section>`
+                  : owner
+                  ? `<section class="card">
+                      <h2>Discontinue</h2>
+                      <p class="muted small" style="margin:4px 0 12px">Archiving hides the product from selling and search. Its code stays reserved and you can restore it later. Out of stock is not the same as discontinued.</p>
+                      <button type="button" class="btn btn-danger" id="archive">${icon("archive", "icon-sm")}<span>Archive product</span></button>
+                    </section>`
+                  : ""
+              }
+            </div>
+          </div>
+        </div>`;
+      }
+
+      function typeLabel(type) {
+        return { SALE: "Sale", RESTOCK: "Restock", EDIT: "Edit", REFUND: "Refund", ARCHIVE: "Archive", RESTORE: "Restore" }[type];
+      }
+
+      /** Records a stock change for this product in Inventory history and saves everything. */
+      function logChange(type, delta, note) {
+        MANUAL_CHANGES.push({ type, productId: product.id, delta, at: new Date().toISOString(), by: App.currentUser().id, note });
+        App.save();
+      }
+
+      function after() {
+        document.getElementById("archive")?.addEventListener("click", () => {
+          if (!confirm(`Archive “${product.name}”? It will be hidden from selling and search.`)) return;
+          product.archived = true;
+          logChange("ARCHIVE", 0, "Discontinued");
+          window.location.reload();
+        });
+        document.getElementById("restore")?.addEventListener("click", () => {
+          product.archived = false;
+          logChange("RESTORE", 0, "Back on sale");
+          window.location.reload();
+        });
+
+        const form = document.getElementById("restock");
+        if (!form) return;
+        const qty = document.getElementById("qty");
+        const error = document.getElementById("qty-error");
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const value = Number(qty.value);
+          if (!Number.isInteger(value) || value < 1 || value > 9999) {
+            error.textContent = "Enter a whole number from 1 to 9,999.";
+            error.hidden = false;
+            qty.setAttribute("aria-invalid", "true");
+            return;
+          }
+          error.hidden = true;
+          qty.removeAttribute("aria-invalid");
+          product.stock += value;
+          logChange("RESTOCK", value, document.getElementById("note").value.trim());
+          form.reset();
+          // Redraw so the new change shows under "Recent stock changes".
+          document.getElementById("page").innerHTML = render();
+          after();
+          App.toast(`Restocked ${value} × ${product.name}. ${product.stock} in stock now.`);
+        });
+      }
+
+      App.mount({ active: "products", capability: "products.read", title: product.name, render, after });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Log in · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <main class="login-wrap">
+      <div class="login-card">
+        <span class="wordmark"><span class="name">Estetika</span><span class="sub">BentaTrack</span></span>
+        <h1>Log in to BentaTrack</h1>
+        <p class="muted small" style="margin-top: 4px">Use the email and password the owner gave you.</p>
+
+        <form id="login" class="form-grid" style="margin-top: 32px" novalidate>
+          <div class="field">
+            <label class="label" for="email">Email</label>
+            <input class="input" id="email" name="email" type="email" autocomplete="username" />
+          </div>
+          <div class="field">
+            <label class="label" for="password">Password</label>
+            <input class="input" id="password" name="password" type="password" autocomplete="current-password" />
+          </div>
+          <p id="login-error" class="error" role="alert" hidden></p>
+          <button type="submit" class="btn btn-primary btn-block">
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 17 5-5-5-5" /><path d="M15 12H3" /><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /></svg>
+            <span>Log in</span>
+          </button>
+        </form>
+      </div>
+    </main>
+
+    <script>
+      const form = document.getElementById("login");
+      const email = document.getElementById("email");
+      const password = document.getElementById("password");
+      const error = document.getElementById("login-error");
+      // Accounts come from the saved data, so staff the owner adds can log in too, and a changed
+      // password takes effect. The role comes from the account.
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const user = USERS.find((u) => u.active && u.email === email.value.trim().toLowerCase());
+        if (!user || password.value !== user.password) {
+          error.textContent = "Wrong email or password, or this account is deactivated.";
+          error.hidden = false;
+          password.setAttribute("aria-invalid", "true");
+          return;
+        }
+        App.logIn(user.id);
+        window.location.href = "dashboard.html";
+      });
+    </script>
+  </body>
+</html>

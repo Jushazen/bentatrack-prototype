@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My account · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // Owner only. The owner's own details and password change. Needs a connection in the real app.
+      const { esc, icon } = App;
+
+      function passwordField(id, label, hint) {
+        return `<div class="field"><label class="label" for="${id}">${label}</label>
+          <input class="input" id="${id}" type="password" autocomplete="${id === "current" ? "current-password" : "new-password"}" />
+          ${hint ? `<p class="hint">${hint}</p>` : ""}<p class="error" id="${id}-error" hidden></p></div>`;
+      }
+
+      function render() {
+        const user = App.currentUser();
+        return `<div class="page narrow">
+          <div class="page-head"><div><h1>My account</h1><p class="sub">Your details and password.</p></div></div>
+          <section class="card">
+            <h2>Account</h2>
+            <dl class="details">
+              <div><dt>Name</dt><dd>${esc(user.name)}</dd></div>
+              <div><dt>Email</dt><dd style="overflow-wrap:anywhere">${esc(user.email)}</dd></div>
+              <div><dt>Role</dt><dd>Owner</dd></div>
+            </dl>
+          </section>
+          <form id="change" class="card form-grid" novalidate>
+            <div><h2>Change password</h2><p class="muted small" style="margin-top:4px">Needs an internet connection. You stay logged in on this device.</p></div>
+            ${passwordField("current", "Current password")}
+            ${passwordField("next", "New password", "At least 8 characters.")}
+            ${passwordField("confirm", "Confirm new password")}
+            <div><button type="submit" class="btn btn-primary">${icon("key", "icon-sm")}<span>Change password</span></button></div>
+          </form>
+        </div>`;
+      }
+
+      function after() {
+        const form = document.getElementById("change");
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const current = document.getElementById("current").value;
+          const next = document.getElementById("next").value;
+          const confirmValue = document.getElementById("confirm").value;
+          const problems = {};
+          if (!current) problems.current = "Enter your current password.";
+          else if (current !== App.currentUser().password) problems.current = "That isn't your current password.";
+          if (next.length < 8) problems.next = "Use at least 8 characters.";
+          else if (next.length > 72) problems.next = "Use 72 characters or fewer.";
+          else if (next === current) problems.next = "Choose a password different from your current one.";
+          if (!problems.next && next !== confirmValue) problems.confirm = "The two new passwords don't match.";
+
+          for (const id of ["current", "next", "confirm"]) {
+            const error = document.getElementById(`${id}-error`);
+            error.textContent = problems[id] || "";
+            error.hidden = !problems[id];
+            if (problems[id]) document.getElementById(id).setAttribute("aria-invalid", "true");
+            else document.getElementById(id).removeAttribute("aria-invalid");
+          }
+          const first = Object.keys(problems)[0];
+          if (first) return document.getElementById(first).focus();
+          App.currentUser().password = next;
+          App.save();
+          form.reset();
+          App.toast("Password changed. Use the new password next time you log in.");
+        });
+      }
+
+      App.mount({ active: "account", capability: "account.password", render, after });
+    </script>
+  </body>
+</html>

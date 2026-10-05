@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Users · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // Owner only. Add staff accounts, reset a staff member's password, and deactivate or
+      // reactivate staff. A deactivated account can't log in. Needs a connection in the real app.
+      const { esc, icon } = App;
+      const users = USERS; // the saved list; App.save() keeps changes
+      let resettingId = null;
+
+      function passwordProblem(value) {
+        if (value.length < 8) return "Use at least 8 characters.";
+        if (value.length > 72) return "Use 72 characters or fewer.";
+        return null;
+      }
+
+      function render() {
+        return `<div class="page narrow">
+          <div class="page-head"><div><h1>User accounts</h1><p class="sub">Who can log in to BentaTrack. Changes here need an internet connection.</p></div></div>
+          <form id="add" class="card form-grid cols-2" novalidate>
+            <h2 class="span-2">Add staff account</h2>
+            <div class="field span-2"><label class="label" for="name">Name</label>
+              <input class="input" id="name" maxlength="80" autocomplete="off" /><p class="error" id="name-error" hidden></p></div>
+            <div class="field"><label class="label" for="email">Email</label>
+              <input class="input" id="email" type="email" autocomplete="off" /><p class="error" id="email-error" hidden></p></div>
+            <div class="field"><label class="label" for="password">Password</label>
+              <input class="input" id="password" type="password" autocomplete="new-password" />
+              <p class="hint">At least 8 characters. Give it to the staff member in person.</p>
+              <p class="error" id="password-error" hidden></p></div>
+            <div class="span-2"><button type="submit" class="btn btn-primary">${icon("plus", "icon-sm")}<span>Add staff account</span></button></div>
+          </form>
+          <section class="card" aria-label="Accounts"><ul class="rows" id="list"></ul></section>
+        </div>`;
+      }
+
+      function drawList() {
+        document.getElementById("list").innerHTML = users
+          .map((u) => {
+            const isStaff = u.role === "STAFF";
+            const status = u.active ? '<span class="badge ok">Active</span>' : '<span class="badge">Deactivated</span>';
+            const actions = isStaff
+              ? `<div class="btn-row">
+                  ${resettingId === u.id ? "" : `<button type="button" class="btn btn-secondary btn-sm" data-reset="${u.id}">${icon("key", "icon-sm")}<span>Reset password</span></button>`}
+                  ${
+                    u.active
+                      ? `<button type="button" class="btn btn-danger btn-sm" data-active="${u.id}">${icon("x", "icon-sm")}<span>Deactivate</span></button>`
+                      : `<button type="button" class="btn btn-secondary btn-sm" data-active="${u.id}">${icon("check", "icon-sm")}<span>Reactivate</span></button>`
+                  }
+                </div>`
+              : `<a class="link small" href="account.html">Change your password in My account</a>`;
+            const resetForm =
+              resettingId === u.id
+                ? `<form data-reset-form="${u.id}" class="form-grid" novalidate style="margin-top:12px;width:100%">
+                    <div class="field"><label class="label" for="new-password">New password for ${esc(u.name)}</label>
+                      <input class="input" id="new-password" type="password" autocomplete="new-password" />
+                      <p class="error" id="new-password-error" hidden></p></div>
+                    <div class="btn-row">
+                      <button type="submit" class="btn btn-primary btn-sm">${icon("check", "icon-sm")}<span>Save password</span></button>
+                      <button type="button" class="btn btn-ghost btn-sm" data-cancel>${icon("x", "icon-sm")}<span>Cancel</span></button>
+                    </div></form>`
+                : "";
+            return `<li style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:14px 0">
+              <div style="min-width:0"><p style="font-weight:500">${esc(u.name)}</p>
+                <p class="muted small" style="overflow-wrap:anywhere">${esc(u.email)}</p>
+                <p class="badges" style="margin-top:6px"><span class="badge">${isStaff ? "Staff" : "Owner"}</span>${status}</p></div>
+              ${actions}${resetForm}</li>`;
+          })
+          .join("");
+        document.getElementById("new-password")?.focus();
+      }
+
+      function setError(id, message) {
+        const error = document.getElementById(`${id}-error`);
+        const input = document.getElementById(id);
+        error.textContent = message || "";
+        error.hidden = !message;
+        if (message) input.setAttribute("aria-invalid", "true");
+        else input.removeAttribute("aria-invalid");
+        return Boolean(message);
+      }
+
+      function after() {
+        drawList();
+        const form = document.getElementById("add");
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const name = document.getElementById("name").value.trim();
+          const email = document.getElementById("email").value.trim().toLowerCase();
+          const password = document.getElementById("password").value;
+          let emailProblem = null;
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) emailProblem = "Enter a valid email address.";
+          else if (users.some((u) => u.email === email)) emailProblem = "Another account already uses this email.";
+          const bad = [
+            setError("name", name ? null : "Enter a name."),
+            setError("email", emailProblem),
+            setError("password", passwordProblem(password)),
+          ];
+          if (bad.some(Boolean)) return;
+          users.push({ id: App.nextId(users, "u"), name, email, role: "STAFF", active: true, password });
+          App.save();
+          form.reset();
+          drawList();
+          App.toast(`Added ${name}. They can log in with ${email}.`);
+        });
+
+        const list = document.getElementById("list");
+        list.addEventListener("click", (event) => {
+          const reset = event.target.closest("[data-reset]");
+          const toggle = event.target.closest("[data-active]");
+          if (reset) {
+            resettingId = reset.dataset.reset;
+            drawList();
+          } else if (event.target.closest("[data-cancel]")) {
+            resettingId = null;
+            drawList();
+          } else if (toggle) {
+            const user = users.find((u) => u.id === toggle.dataset.active);
+            if (user.active && !confirm(`Deactivate ${user.name}? They will be logged out and can't log in until you reactivate them.`)) return;
+            user.active = !user.active;
+            App.save();
+            drawList();
+            App.toast(user.active ? `${user.name} can log in again.` : `${user.name} is deactivated and logged out.`);
+          }
+        });
+        list.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const user = users.find((u) => u.id === event.target.dataset.resetForm);
+          const password = document.getElementById("new-password").value;
+          if (setError("new-password", passwordProblem(password))) return;
+          user.password = password;
+          App.save();
+          resettingId = null;
+          drawList();
+          App.toast(`Password reset for ${user.name}. They log in with the new password from now on.`);
+        });
+      }
+
+      App.mount({ active: "users", capability: "users.manage", title: "Users", render, after });
+    </script>
+  </body>
+</html>

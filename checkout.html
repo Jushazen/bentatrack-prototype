@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Checkout · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // Checkout: search or "scan" products into the cart, set quantities, add a discount, pick
+      // Cash or GCash, and complete the sale. The receipt shows what would be saved.
+      const { esc, peso, icon } = App;
+      let cart = []; // { productId, qty }
+
+      function render() {
+        return `<div class="page" style="max-width:72rem">
+          <div class="page-head"><div><h1>Checkout</h1><p class="sub">Add the items, then take payment.</p></div></div>
+          <form id="checkout" class="checkout" novalidate>
+            <section class="stack" aria-labelledby="cart-heading">
+              <div class="card" style="display:grid;gap:12px;grid-template-columns:1fr auto;align-items:end">
+                <div class="field search-box">
+                  <label class="label" for="search">Add a product</label>
+                  <input class="input" id="search" autocomplete="off" placeholder="Type a name or code, or scan a barcode" />
+                  <div class="search-results" id="results" hidden></div>
+                </div>
+                <button type="button" class="btn btn-secondary" id="scan">${icon("scan", "icon-sm")}<span>Scan</span></button>
+              </div>
+              <div class="card">
+                <h2 id="cart-heading">Cart</h2>
+                <div id="cart"></div>
+              </div>
+            </section>
+
+            <section class="card payment stack" aria-labelledby="payment-heading" style="gap:20px">
+              <h2 id="payment-heading">Payment</h2>
+              <div class="stack" style="gap:8px">
+                <fieldset class="choice">
+                  <legend class="label">Discount</legend>
+                  <div class="choice-options">
+                    <label><input type="radio" name="discountMode" value="NONE" checked /><span>None</span></label>
+                    <label><input type="radio" name="discountMode" value="AMOUNT" /><span>Amount (₱)</span></label>
+                    <label><input type="radio" name="discountMode" value="PERCENT" /><span>Percent (%)</span></label>
+                  </div>
+                </fieldset>
+                <div class="field" id="discount-field" hidden>
+                  <label class="label" for="discount" id="discount-label">Discount amount (₱)</label>
+                  <input class="input" id="discount" inputmode="decimal" autocomplete="off" />
+                  <p class="error" id="discount-error" hidden></p>
+                </div>
+              </div>
+              <fieldset class="choice">
+                <legend class="label">Payment method</legend>
+                <div class="choice-options">
+                  <label><input type="radio" name="payment" value="CASH" checked /><span>Cash</span></label>
+                  <label><input type="radio" name="payment" value="GCASH" /><span>GCash</span></label>
+                </div>
+              </fieldset>
+              <div class="field">
+                <label class="label" for="customer">Customer name or contact <span class="optional">(optional)</span></label>
+                <input class="input" id="customer" maxlength="120" autocomplete="off" />
+              </div>
+              <dl class="summary" id="summary"></dl>
+              <button type="submit" class="btn btn-primary btn-block" id="complete">${icon("check", "icon-sm")}<span>Complete sale</span></button>
+            </section>
+          </form>
+
+          <dialog class="dialog" id="receipt" aria-labelledby="receipt-title"></dialog>
+        </div>`;
+      }
+
+      // ---------- Cart maths ----------
+      function lines() {
+        return cart.map((l) => {
+          const p = App.product(l.productId);
+          return { ...l, product: p, amount: p.price * (Number.isInteger(l.qty) ? l.qty : 0) };
+        });
+      }
+
+      function discountState(subtotal) {
+        const form = document.getElementById("checkout");
+        const mode = form.elements.discountMode.value;
+        const text = document.getElementById("discount").value.trim();
+        if (mode === "NONE" || text === "") return { ok: true, discount: null };
+        const n = Number(text);
+        if (!Number.isFinite(n) || n <= 0) return { ok: false, message: "Enter a number above 0." };
+        if (mode === "PERCENT") {
+          if (n > 100) return { ok: false, message: "A percent discount can't be more than 100%." };
+          return { ok: true, discount: { type: "PERCENT", value: n } };
+        }
+        const centavos = Math.round(n * 100);
+        if (centavos > subtotal) return { ok: false, message: "The discount can't be more than the subtotal." };
+        return { ok: true, discount: { type: "AMOUNT", value: centavos } };
+      }
+
+      function problems() {
+        const out = {};
+        for (const l of lines()) {
+          if (!Number.isInteger(l.qty) || l.qty < 1) out[l.productId] = "Enter a whole number, 1 or more.";
+          else if (l.qty > l.product.stock) out[l.productId] = `Only ${l.product.stock} in stock.`;
+        }
+        return out;
+      }
+
+      // ---------- Drawing ----------
+      function drawCart() {
+        const box = document.getElementById("cart");
+        const issues = problems();
+        if (!cart.length) {
+          box.innerHTML = `<p class="muted" style="display:flex;gap:8px;align-items:center;margin-top:12px">${icon("cart", "icon-sm")}<span>No items yet. Search or scan to add products.</span></p>`;
+        } else {
+          box.innerHTML = `<ul aria-label="Items in this sale" style="margin-top:8px">${lines()
+            .map(
+              (l) => `<li class="cart-line">
+                <div class="info"><p style="font-weight:500">${esc(l.product.name)}</p>
+                  <p class="muted small">${l.product.code} · ${peso(l.product.price)} each · ${l.product.stock} in stock</p></div>
+                <input class="input qty" type="number" min="1" max="${l.product.stock}" step="1" value="${Number.isNaN(l.qty) ? "" : l.qty}"
+                  data-qty="${l.productId}" aria-label="Quantity of ${esc(l.product.name)}" ${issues[l.productId] ? 'aria-invalid="true"' : ""} />
+                <p class="num right">${Number.isInteger(l.qty) ? peso(l.amount) : "—"}</p>
+                <button type="button" class="btn btn-ghost btn-sm" data-remove="${l.productId}">${icon("trash", "icon-sm")}<span>Remove</span></button>
+                ${issues[l.productId] ? `<p class="error" style="grid-column:1/-1">${issues[l.productId]}</p>` : ""}
+              </li>`,
+            )
+            .join("")}</ul>`;
+        }
+        drawSummary();
+      }
+
+      function drawSummary() {
+        const ls = lines();
+        const subtotal = ls.reduce((s, l) => s + l.amount, 0);
+        const units = ls.reduce((s, l) => s + (Number.isInteger(l.qty) ? l.qty : 0), 0);
+        const d = discountState(subtotal);
+        const discount = d.ok ? App.discountAmount(subtotal, d.discount) : 0;
+        const error = document.getElementById("discount-error");
+        error.hidden = d.ok;
+        error.textContent = d.ok ? "" : d.message;
+        const discountInput = document.getElementById("discount");
+        if (d.ok) discountInput.removeAttribute("aria-invalid");
+        else discountInput.setAttribute("aria-invalid", "true");
+
+        document.getElementById("summary").innerHTML = `
+          <div><dt>Subtotal (${units} ${units === 1 ? "item" : "items"})</dt><dd class="num">${ls.length ? peso(subtotal) : "—"}</dd></div>
+          <div><dt>Discount</dt><dd class="num">${discount ? "-" + peso(discount) : "—"}</dd></div>
+          <div class="total"><dt>Total</dt><dd class="num">${ls.length ? peso(subtotal - discount) : "—"}</dd></div>`;
+        document.getElementById("complete").disabled = !ls.length || !d.ok || Object.keys(problems()).length > 0;
+      }
+
+      function add(productId) {
+        const p = App.product(productId);
+        if (p.stock <= 0) {
+          App.toast(`${p.name} is out of stock.`, "error");
+          return;
+        }
+        const line = cart.find((l) => l.productId === productId);
+        if (line) line.qty = Math.min((line.qty || 0) + 1, p.stock);
+        else cart.push({ productId, qty: 1 });
+        drawCart();
+      }
+
+      function drawResults(query) {
+        const box = document.getElementById("results");
+        const q = query.trim().toLowerCase();
+        if (!q) {
+          box.hidden = true;
+          return;
+        }
+        const hits = App.activeProducts().filter((p) => `${p.name} ${p.code} ${p.barcode || ""}`.toLowerCase().includes(q)).slice(0, 8);
+        box.innerHTML = hits.length
+          ? hits
+              .map(
+                (p) => `<button type="button" data-add="${p.id}" ${p.stock <= 0 ? "disabled" : ""}>
+                  <span><span style="display:block;font-weight:500">${esc(p.name)}</span><span class="muted small">${p.code} · ${p.stock <= 0 ? "Out of stock" : p.stock + " in stock"}</span></span>
+                  <span class="num">${peso(p.price)}</span></button>`,
+              )
+              .join("")
+          : `<p class="muted" style="padding:10px 12px">No product matches “${esc(query)}”.</p>`;
+        box.hidden = false;
+      }
+
+      // ---------- Completing the sale ----------
+      function complete() {
+        const ls = lines();
+        const subtotal = ls.reduce((s, l) => s + l.amount, 0);
+        const form = document.getElementById("checkout");
+        const d = discountState(subtotal);
+        const discount = App.discountAmount(subtotal, d.discount);
+        const total = subtotal - discount;
+        const payment = App.PAYMENT_LABEL[form.elements.payment.value];
+        const customer = document.getElementById("customer").value.trim();
+
+        // Record the sale, take the sold units off the stock, and save.
+        const sale = {
+          id: App.nextId(SALES, ""),
+          at: new Date().toISOString(),
+          by: App.currentUser().id,
+          payment: form.elements.payment.value,
+          customer,
+          discount: d.discount,
+          items: ls.map((l) => ({ productId: l.productId, qty: l.qty, unitPrice: l.product.price })),
+        };
+        SALES.unshift(sale);
+        const nowLow = [];
+        for (const l of ls) {
+          l.product.stock -= l.qty;
+          if (App.status(l.product).key !== "active") nowLow.push(l.product);
+        }
+        App.save();
+
+        const dialog = document.getElementById("receipt");
+        dialog.innerHTML = `<div class="dialog-body">
+          <div style="display:flex;gap:10px;align-items:center" class="text-ok">${icon("check")}<h2 id="receipt-title" style="color:var(--text)">Sale recorded</h2></div>
+          <p class="muted small">Sale #${sale.id} · ${App.timeFormat.format(new Date())} · ${payment} · By ${esc(App.currentUser().name)}${customer ? " · " + esc(customer) : ""}</p>
+          <table class="table"><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Amount</th></tr></thead><tbody>
+            ${ls.map((l) => `<tr><td>${esc(l.product.name)}</td><td class="num">${l.qty}</td><td class="num">${peso(l.amount)}</td></tr>`).join("")}
+          </tbody></table>
+          <dl class="summary">
+            <div><dt>Subtotal</dt><dd class="num">${peso(subtotal)}</dd></div>
+            <div><dt>Discount</dt><dd class="num">${discount ? "-" + peso(discount) : "—"}</dd></div>
+            <div class="total"><dt>Total</dt><dd class="num">${peso(total)}</dd></div>
+          </dl>
+          ${nowLow.length ? `<p class="text-warn small">Now low on stock: ${nowLow.map((p) => `${esc(p.name)} (${p.stock} left)`).join(", ")}</p>` : ""}
+          <div class="btn-row">
+            <button type="button" class="btn btn-primary" id="new-sale">${icon("cart", "icon-sm")}<span>New sale</span></button>
+            <a class="btn btn-secondary" href="sale.html?id=${sale.id}">${icon("receipt", "icon-sm")}<span>View sale</span></a>
+          </div>
+        </div>`;
+        dialog.showModal();
+        document.getElementById("new-sale").addEventListener("click", () => {
+          dialog.close();
+          cart = [];
+          form.reset();
+          document.getElementById("discount-field").hidden = true;
+          drawCart();
+          document.getElementById("search").focus();
+        });
+      }
+
+      function after() {
+        const form = document.getElementById("checkout");
+        const search = document.getElementById("search");
+        const results = document.getElementById("results");
+
+        search.addEventListener("input", () => drawResults(search.value));
+        search.addEventListener("keydown", (event) => {
+          // Enter on an exact code or barcode adds it straight away, like a scanner would.
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          const q = search.value.trim().toLowerCase();
+          const exact = App.activeProducts().find((p) => p.code.toLowerCase() === q || p.barcode === q);
+          const first = results.querySelector("button[data-add]:not(:disabled)");
+          const pick = exact ? exact.id : first?.dataset.add;
+          if (pick) {
+            add(pick);
+            search.value = "";
+            results.hidden = true;
+          }
+        });
+        results.addEventListener("click", (event) => {
+          const button = event.target.closest("[data-add]");
+          if (!button) return;
+          add(button.dataset.add);
+          search.value = "";
+          results.hidden = true;
+          search.focus();
+        });
+        document.addEventListener("click", (event) => {
+          if (!event.target.closest(".search-box")) results.hidden = true;
+        });
+
+        document.getElementById("scan").addEventListener("click", () => {
+          // Prototype: pretend the camera read the barcode of an in-stock product.
+          const withBarcode = App.activeProducts().filter((p) => p.barcode && p.stock > 0);
+          const p = withBarcode[Math.floor(Math.random() * withBarcode.length)];
+          add(p.id);
+          App.toast(`Scanned ${p.barcode}: ${p.name}`);
+        });
+
+        document.getElementById("cart").addEventListener("input", (event) => {
+          const id = event.target.dataset.qty;
+          if (!id) return;
+          const line = cart.find((l) => l.productId === id);
+          line.qty = event.target.value === "" ? NaN : Number(event.target.value);
+          drawSummary();
+        });
+        document.getElementById("cart").addEventListener("change", (event) => {
+          if (event.target.dataset.qty) drawCart();
+        });
+        document.getElementById("cart").addEventListener("click", (event) => {
+          const button = event.target.closest("[data-remove]");
+          if (!button) return;
+          cart = cart.filter((l) => l.productId !== button.dataset.remove);
+          drawCart();
+        });
+
+        form.addEventListener("change", (event) => {
+          if (event.target.name !== "discountMode") return;
+          const mode = event.target.value;
+          document.getElementById("discount-field").hidden = mode === "NONE";
+          document.getElementById("discount-label").textContent = mode === "AMOUNT" ? "Discount amount (₱)" : "Discount percent (%)";
+          document.getElementById("discount").placeholder = mode === "AMOUNT" ? "e.g. 50" : "e.g. 10";
+          drawSummary();
+        });
+        document.getElementById("discount").addEventListener("input", drawSummary);
+
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (!document.getElementById("complete").disabled) complete();
+        });
+
+        drawCart();
+        search.focus();
+      }
+
+      App.mount({ active: "checkout", capability: "sales.create", render, after });
+    </script>
+  </body>
+</html>

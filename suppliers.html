@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Suppliers · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // Owner only. Keep a list of suppliers with their contact details. Deleting a supplier
+      // doesn't delete its products; they just show "No supplier".
+      const { esc, icon } = App;
+      const suppliers = SUPPLIERS; // the saved list; App.save() keeps changes
+      let editingId = null;
+
+      const FIELDS = [
+        { id: "name", label: "Supplier name", required: true, max: 120 },
+        { id: "contactPerson", label: "Contact person", max: 120 },
+        { id: "phone", label: "Phone", max: 40, attrs: 'inputmode="tel"' },
+        { id: "email", label: "Email", max: 254, attrs: 'type="email"' },
+        { id: "address", label: "Address", max: 300, wide: true },
+      ];
+
+      function render() {
+        return `<div class="page narrow">
+          <div class="page-head"><div><h1>Suppliers</h1><p class="sub">Who you buy stock from, and how to reach them.</p></div></div>
+          <form id="supplier-form" class="card form-grid cols-2" novalidate>
+            <h2 class="span-2" id="form-title">Add supplier</h2>
+            ${FIELDS.map(
+              (f) => `<div class="field ${f.wide || f.id === "name" ? "span-2" : ""}">
+                <label class="label" for="${f.id}">${f.label}${f.required ? "" : ' <span class="optional">(optional)</span>'}</label>
+                <input class="input" id="${f.id}" name="${f.id}" maxlength="${f.max}" autocomplete="off" ${f.attrs || ""} />
+                <p class="error" id="${f.id}-error" hidden></p></div>`,
+            ).join("")}
+            <div class="btn-row span-2">
+              <button type="submit" class="btn btn-primary" id="save">${icon("plus", "icon-sm")}<span>Add supplier</span></button>
+              <button type="button" class="btn btn-ghost" id="cancel" hidden>${icon("x", "icon-sm")}<span>Cancel</span></button>
+            </div>
+          </form>
+          <section class="stack" aria-label="Suppliers" id="list"></section>
+        </div>`;
+      }
+
+      function drawList() {
+        const list = document.getElementById("list");
+        if (!suppliers.length) {
+          list.innerHTML = `<p class="card empty">No suppliers yet. Add the first one above.</p>`;
+          return;
+        }
+        list.innerHTML = suppliers
+          .map((s) => {
+            const count = PRODUCTS.filter((p) => p.supplier === s.id).length;
+            const detail = (label, value) => (value ? `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>` : "");
+            return `<article class="card">
+              <div class="card-head">
+                <div><h2>${esc(s.name)}</h2><p class="muted small">${count ? App.plural(count, "product") : "No products"}</p></div>
+                <div class="btn-row">
+                  <button type="button" class="btn btn-secondary btn-sm" data-edit="${s.id}">${icon("pencil", "icon-sm")}<span>Edit</span></button>
+                  <button type="button" class="btn btn-danger btn-sm" data-delete="${s.id}">${icon("trash", "icon-sm")}<span>Delete</span></button>
+                </div>
+              </div>
+              <dl class="details">
+                ${detail("Contact person", s.contactPerson)}${detail("Phone", s.phone)}${detail("Email", s.email)}${detail("Address", s.address)}
+                ${s.contactPerson || s.phone || s.email || s.address ? "" : `<div><dt>No contact details yet</dt><dd></dd></div>`}
+              </dl>
+            </article>`;
+          })
+          .join("");
+      }
+
+      function setMode(supplier) {
+        editingId = supplier ? supplier.id : null;
+        const form = document.getElementById("supplier-form");
+        form.reset();
+        form.querySelectorAll(".error").forEach((e) => (e.hidden = true));
+        form.querySelectorAll("[aria-invalid]").forEach((e) => e.removeAttribute("aria-invalid"));
+        if (supplier) FIELDS.forEach((f) => (form.elements[f.id].value = supplier[f.id] || ""));
+        document.getElementById("form-title").textContent = supplier ? `Edit ${supplier.name}` : "Add supplier";
+        document.getElementById("save").innerHTML = supplier
+          ? `${icon("check", "icon-sm")}<span>Save supplier</span>`
+          : `${icon("plus", "icon-sm")}<span>Add supplier</span>`;
+        document.getElementById("cancel").hidden = !supplier;
+        if (supplier) {
+          form.scrollIntoView({ behavior: "smooth", block: "start" });
+          form.elements.name.focus({ preventScroll: true });
+        }
+      }
+
+      function after() {
+        drawList();
+        const form = document.getElementById("supplier-form");
+        document.getElementById("cancel").addEventListener("click", () => setMode(null));
+
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const values = Object.fromEntries(FIELDS.map((f) => [f.id, form.elements[f.id].value.trim()]));
+          values.email = values.email.toLowerCase();
+          const problems = {};
+          if (!values.name) problems.name = "Enter the supplier's name.";
+          if (values.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email)) problems.email = "Enter a valid email address, or leave it blank.";
+          FIELDS.forEach((f) => {
+            const error = document.getElementById(`${f.id}-error`);
+            error.textContent = problems[f.id] || "";
+            error.hidden = !problems[f.id];
+            if (problems[f.id]) form.elements[f.id].setAttribute("aria-invalid", "true");
+            else form.elements[f.id].removeAttribute("aria-invalid");
+          });
+          if (Object.keys(problems).length) return form.elements[Object.keys(problems)[0]].focus();
+
+          if (editingId) {
+            Object.assign(suppliers.find((s) => s.id === editingId), values);
+            App.toast(`Saved ${values.name}.`);
+          } else {
+            suppliers.push({ id: App.nextId(suppliers, "s"), ...values });
+            suppliers.sort((a, b) => a.name.localeCompare(b.name));
+            App.toast(`Added ${values.name}.`);
+          }
+          App.save();
+          setMode(null);
+          drawList();
+        });
+
+        document.getElementById("list").addEventListener("click", (event) => {
+          const edit = event.target.closest("[data-edit]");
+          const remove = event.target.closest("[data-delete]");
+          if (edit) setMode(suppliers.find((s) => s.id === edit.dataset.edit));
+          if (remove) {
+            const supplier = suppliers.find((s) => s.id === remove.dataset.delete);
+            const count = PRODUCTS.filter((p) => p.supplier === supplier.id).length;
+            const note = count ? ` Its ${App.plural(count, "product")} will show “No supplier”.` : "";
+            if (!confirm(`Delete ${supplier.name}?${note}`)) return;
+            suppliers.splice(suppliers.indexOf(supplier), 1);
+            // Its products stay, with no supplier.
+            PRODUCTS.forEach((p) => p.supplier === supplier.id && (p.supplier = null));
+            App.save();
+            if (editingId === supplier.id) setMode(null);
+            drawList();
+            App.toast(`Deleted ${supplier.name}.`);
+          }
+        });
+      }
+
+      App.mount({ active: "suppliers", capability: "suppliers.manage", render, after });
+    </script>
+  </body>
+</html>

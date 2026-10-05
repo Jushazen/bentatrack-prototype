@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Add product · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // Add a product (no ?id) or edit one (?id=p01). Staff don't see purchase price or supplier;
+      // a product they add shows "Needs cost" until the owner adds the purchase price.
+      const { esc, icon } = App;
+      const editing = App.product(App.params().get("id"));
+
+      function field(id, label, { value = "", required = false, type = "text", hint = "", attrs = "" } = {}) {
+        return `<div class="field">
+          <label class="label" for="${id}">${label}${required ? "" : ' <span class="optional">(optional)</span>'}</label>
+          <input class="input" id="${id}" name="${id}" type="${type}" value="${esc(value)}" ${attrs} />
+          ${hint ? `<p class="hint">${hint}</p>` : ""}
+          <p class="error" id="${id}-error" hidden></p>
+        </div>`;
+      }
+
+      const money = (centavos) => (centavos === null || centavos === undefined ? "" : (centavos / 100).toFixed(2));
+
+      function render() {
+        const owner = App.role() === "OWNER";
+        const p = editing || {};
+        const title = editing ? "Edit product" : "Add product";
+        const back = editing ? `product.html?id=${p.id}` : "products.html";
+
+        return `<div class="page narrow">
+          <div>
+            <a class="back-link" href="${back}">${icon("arrowLeft", "icon-sm")}<span>${editing ? esc(p.name) : "All products"}</span></a>
+            <h1>${title}</h1>
+          </div>
+          <form id="product-form" class="stack" novalidate>
+            <section class="card form-grid cols-2">
+              <h2 class="span-2">The product</h2>
+              <div class="span-2">${field("name", "Product name", { value: p.name, required: true })}</div>
+              ${field("code", "Product code", { value: p.code, required: true, hint: "Must be unique, e.g. BAG-008." })}
+              <div class="field">
+                <label class="label" for="category">Category</label>
+                <select class="input" id="category" name="category">
+                  ${CATEGORIES.map((c) => `<option ${c === p.category ? "selected" : ""}>${c}</option>`).join("")}
+                </select>
+              </div>
+              ${field("brand", "Brand", { value: p.brand || "" })}
+              ${field("barcode", "Barcode", { value: p.barcode || "", hint: "Type it or scan it with the camera." })}
+            </section>
+
+            <section class="card form-grid cols-2">
+              <h2 class="span-2">Price and stock</h2>
+              ${field("price", "Selling price (₱)", { value: money(p.price), required: true, attrs: 'inputmode="decimal"' })}
+              ${
+                owner
+                  ? field("cost", "Purchase price (₱)", { value: money(p.cost), attrs: 'inputmode="decimal"', hint: "Only the owner sees this. Used for profit." })
+                  : ""
+              }
+              ${
+                editing
+                  ? `<div class="field"><p class="label">Stock quantity</p><p style="min-height:44px;display:flex;align-items:center">${p.stock} <span class="muted small" style="margin-left:8px">Change it with Restock or a sale.</span></p></div>`
+                  : field("stock", "Stock quantity", { value: "", required: true, attrs: 'inputmode="numeric"' })
+              }
+              ${field("threshold", "Low stock threshold", { value: p.threshold ?? 5, required: true, attrs: 'inputmode="numeric"', hint: "Shows Low Stock at or below this number." })}
+              ${
+                owner
+                  ? `<div class="field"><label class="label" for="supplier">Supplier <span class="optional">(optional)</span></label>
+                      <select class="input" id="supplier" name="supplier"><option value="">No supplier</option>
+                      ${SUPPLIERS.map((s) => `<option value="${s.id}" ${s.id === p.supplier ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></div>`
+                  : ""
+              }
+              ${field("expires", "Expiration date", { type: "date", value: p.expires || "" })}
+            </section>
+
+            <div class="btn-row">
+              <button type="submit" class="btn btn-primary">${icon("check", "icon-sm")}<span>${editing ? "Save changes" : "Add product"}</span></button>
+              <a class="btn btn-ghost" href="${back}">${icon("x", "icon-sm")}<span>Cancel</span></a>
+            </div>
+          </form>
+        </div>`;
+      }
+
+      function after() {
+        const form = document.getElementById("product-form");
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const problems = {};
+          const value = (id) => (form.elements[id] ? form.elements[id].value.trim() : "");
+          if (!value("name")) problems.name = "Enter the product name.";
+          const code = value("code").toUpperCase();
+          if (!code) problems.code = "Enter a product code.";
+          else if (PRODUCTS.some((p) => p.code === code && p !== editing)) problems.code = `${code} is already used by another product.`;
+          if (!(Number(value("price")) > 0)) problems.price = "Enter a selling price above ₱0.";
+          if (form.elements.stock && !/^\d+$/.test(value("stock"))) problems.stock = "Enter a whole number, 0 or more.";
+          if (!/^\d+$/.test(value("threshold"))) problems.threshold = "Enter a whole number, 0 or more.";
+
+          form.querySelectorAll(".error").forEach((el) => (el.hidden = true));
+          form.querySelectorAll("[aria-invalid]").forEach((el) => el.removeAttribute("aria-invalid"));
+          for (const [id, message] of Object.entries(problems)) {
+            const error = document.getElementById(`${id}-error`);
+            error.textContent = message;
+            error.hidden = false;
+            form.elements[id].setAttribute("aria-invalid", "true");
+          }
+          if (Object.keys(problems).length) {
+            form.elements[Object.keys(problems)[0]].focus();
+            return;
+          }
+          const toCentavos = (text) => (text === "" ? null : Math.round(Number(text) * 100));
+          const fields = {
+            name: value("name"),
+            code,
+            category: value("category"),
+            brand: value("brand") || null,
+            barcode: value("barcode") || null,
+            price: toCentavos(value("price")),
+            threshold: Number(value("threshold")),
+            expires: value("expires") || null,
+          };
+          // Staff don't see purchase price or supplier, so their edits leave those alone.
+          if (form.elements.cost) fields.cost = toCentavos(value("cost"));
+          if (form.elements.supplier) fields.supplier = value("supplier") || null;
+
+          let id;
+          if (editing) {
+            const changes = [];
+            if (fields.price !== editing.price) changes.push(`Selling price ${App.peso(editing.price)} → ${App.peso(fields.price)}`);
+            if (fields.name !== editing.name) changes.push(`Renamed from “${editing.name}”`);
+            if (fields.threshold !== editing.threshold) changes.push(`Low stock alert ${editing.threshold} → ${fields.threshold}`);
+            Object.assign(editing, fields);
+            id = editing.id;
+            MANUAL_CHANGES.push({ type: "EDIT", productId: id, delta: 0, at: new Date().toISOString(), by: App.currentUser().id, note: changes.join(" · ") || "Details updated" });
+          } else {
+            id = App.nextId(PRODUCTS, "p");
+            PRODUCTS.push({
+              id,
+              cost: null, // staff-added products wait for the owner to add the purchase price
+              supplier: null,
+              ...fields,
+              stock: Number(value("stock")),
+              added: new Date().toISOString().slice(0, 10),
+            });
+          }
+          App.save();
+          App.toast(editing ? `Saved changes to ${fields.name}.` : `Added ${fields.name}.`);
+          setTimeout(() => (window.location.href = `product.html?id=${id}`), 800);
+        });
+      }
+
+      App.mount({
+        active: "products",
+        capability: editing ? "products.update" : "products.create",
+        title: editing ? "Edit product" : "Add product",
+        render,
+        after,
+      });
+    </script>
+  </body>
+</html>

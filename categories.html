@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Categories · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // Owner only. Add, rename and delete product categories. Names are unique (ignoring capital
+      // letters), and a category that still has products can't be deleted.
+      const { esc, icon } = App;
+      const categories = CATEGORIES; // the saved list; App.save() keeps changes
+      let renaming = null; // the category being renamed
+
+      const productCount = (name) => PRODUCTS.filter((p) => p.category === name).length;
+      const taken = (name, except) => categories.some((c) => c !== except && c.toLowerCase() === name.toLowerCase());
+
+      function render() {
+        return `<div class="page narrow">
+          <div class="page-head"><div><h1>Categories</h1><p class="sub">Group products so they are easier to find.</p></div></div>
+          <form id="add" class="card form-grid" novalidate style="grid-template-columns:1fr auto;align-items:start">
+            <div class="field">
+              <label class="label" for="name">Category name</label>
+              <input class="input" id="name" maxlength="60" autocomplete="off" placeholder="e.g. Footwear" />
+              <p class="error" id="name-error" hidden></p>
+            </div>
+            <button type="submit" class="btn btn-primary" style="margin-top:27px">${icon("plus", "icon-sm")}<span>Add category</span></button>
+          </form>
+          <section class="card" aria-label="Categories"><ul class="rows" id="list"></ul></section>
+        </div>`;
+      }
+
+      function drawList() {
+        const list = document.getElementById("list");
+        if (!categories.length) {
+          list.innerHTML = `<li class="empty">No categories yet. Add the first one above.</li>`;
+          return;
+        }
+        list.innerHTML = categories
+          .map((c) => {
+            const count = productCount(c);
+            if (c === renaming) {
+              return `<li style="padding:12px 0"><form data-rename="${esc(c)}" class="form-grid" novalidate>
+                <div class="field"><label class="label" for="rename">New name for “${esc(c)}”</label>
+                  <input class="input" id="rename" maxlength="60" value="${esc(c)}" />
+                  <p class="error" id="rename-error" hidden></p></div>
+                <div class="btn-row">
+                  <button type="submit" class="btn btn-primary btn-sm">${icon("check", "icon-sm")}<span>Save name</span></button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-cancel>${icon("x", "icon-sm")}<span>Cancel</span></button>
+                </div></form></li>`;
+            }
+            return `<li style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:12px 0">
+              <div><p style="font-weight:500">${esc(c)}</p>
+                <p class="muted small">${count ? `<a class="link" href="products.html?category=${encodeURIComponent(c)}">${App.plural(count, "product")}</a>` : "No products"}</p></div>
+              <div class="btn-row">
+                <button type="button" class="btn btn-secondary btn-sm" data-start-rename="${esc(c)}">${icon("pencil", "icon-sm")}<span>Rename</span></button>
+                ${
+                  count
+                    ? `<span class="muted small" style="align-self:center">Has products, so it can't be deleted</span>`
+                    : `<button type="button" class="btn btn-danger btn-sm" data-delete="${esc(c)}">${icon("trash", "icon-sm")}<span>Delete</span></button>`
+                }
+              </div></li>`;
+          })
+          .join("");
+        document.getElementById("rename")?.focus();
+      }
+
+      function showError(id, message) {
+        const error = document.getElementById(`${id}-error`);
+        const input = document.getElementById(id);
+        error.textContent = message || "";
+        error.hidden = !message;
+        if (message) input.setAttribute("aria-invalid", "true");
+        else input.removeAttribute("aria-invalid");
+      }
+
+      function after() {
+        drawList();
+        document.getElementById("add").addEventListener("submit", (event) => {
+          event.preventDefault();
+          const input = document.getElementById("name");
+          const name = input.value.trim();
+          if (!name) return showError("name", "Enter a category name.");
+          if (taken(name)) return showError("name", `There is already a category called “${name}”.`);
+          showError("name", null);
+          categories.push(name);
+          categories.sort((a, b) => a.localeCompare(b));
+          App.save();
+          input.value = "";
+          drawList();
+          App.toast(`Added the category ${name}.`);
+        });
+
+        const list = document.getElementById("list");
+        list.addEventListener("click", (event) => {
+          const start = event.target.closest("[data-start-rename]");
+          const remove = event.target.closest("[data-delete]");
+          if (start) {
+            renaming = start.dataset.startRename;
+            drawList();
+          } else if (event.target.closest("[data-cancel]")) {
+            renaming = null;
+            drawList();
+          } else if (remove) {
+            const name = remove.dataset.delete;
+            if (!confirm(`Delete the category “${name}”?`)) return;
+            categories.splice(categories.indexOf(name), 1);
+            App.save();
+            drawList();
+            App.toast(`Deleted the category ${name}.`);
+          }
+        });
+        list.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const old = event.target.dataset.rename;
+          const name = document.getElementById("rename").value.trim();
+          if (!name) return showError("rename", "Enter a category name.");
+          if (taken(name, old)) return showError("rename", `There is already a category called “${name}”.`);
+          categories[categories.indexOf(old)] = name;
+          categories.sort((a, b) => a.localeCompare(b));
+          // Products in the category move with it.
+          PRODUCTS.forEach((p) => p.category === old && (p.category = name));
+          App.save();
+          renaming = null;
+          drawList();
+          App.toast(`Renamed ${old} to ${name}.`);
+        });
+      }
+
+      App.mount({ active: "categories", capability: "categories.manage", render, after });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Products · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // Product list with search and filters. The filter form reloads this page with the
+      // choices in the address (?q=…&category=…&stock=low), like the real app.
+      const { esc, peso, icon } = App;
+
+      function render() {
+        const params = App.params();
+        const q = (params.get("q") || "").trim().toLowerCase();
+        const category = params.get("category") || "";
+        const stock = params.get("stock") || "";
+        const owner = App.role() === "OWNER";
+        // Archived (discontinued) products are hidden; only the owner can choose to see them.
+        const showArchived = owner && params.get("archived") === "1";
+
+        const list = PRODUCTS.filter((p) => {
+          if (p.archived && !showArchived) return false;
+          const s = App.status(p).key;
+          if (q && !`${p.name} ${p.code} ${p.brand || ""} ${p.barcode || ""}`.toLowerCase().includes(q)) return false;
+          if (category && p.category !== category) return false;
+          if (stock === "low" && s === "active") return false;
+          if (stock === "out" && s !== "out") return false;
+          return true;
+        }).sort((a, b) => a.name.localeCompare(b.name));
+
+        const option = (value, label, current) =>
+          `<option value="${esc(value)}" ${value === current ? "selected" : ""}>${esc(label)}</option>`;
+
+        const rows = list
+          .map(
+            (p) => `<li><a class="product-row" href="product.html?id=${p.id}">
+              <div><p class="name">${esc(p.name)}</p><p class="sub">${p.code} · ${p.category}${p.brand ? " · " + esc(p.brand) : ""}</p></div>
+              <p class="price">${peso(p.price)}</p>
+              <p class="stock muted small">${p.stock} in stock</p>
+              <p class="badges">${p.archived ? '<span class="badge">Archived</span>' : App.statusBadge(p)}${owner && p.cost === null ? '<span class="badge warn">Needs cost</span>' : ""}</p>
+            </a></li>`,
+          )
+          .join("");
+
+        return `<div class="page">
+          <div class="page-head">
+            <div><h1>Products</h1><p class="sub">Everything in the store, with how many are left.</p></div>
+            <a class="btn btn-primary" href="product-form.html">${icon("plus", "icon-sm")}<span>Add product</span></a>
+          </div>
+
+          <form class="card filters" method="get" action="products.html" aria-label="Filter products">
+            <div class="field">
+              <label class="label" for="q">Search</label>
+              <input class="input" id="q" name="q" value="${esc(params.get("q") || "")}" placeholder="Name, code, brand or barcode" />
+            </div>
+            <div class="field">
+              <label class="label" for="category">Category</label>
+              <select class="input" id="category" name="category">
+                ${option("", "All categories", category)}
+                ${CATEGORIES.map((c) => option(c, c, category)).join("")}
+              </select>
+            </div>
+            <div class="field">
+              <label class="label" for="stock">Stock</label>
+              <select class="input" id="stock" name="stock">
+                ${option("", "All stock levels", stock)}
+                ${option("low", "Low or out of stock", stock)}
+                ${option("out", "Out of stock only", stock)}
+              </select>
+            </div>
+            <button type="submit" class="btn btn-secondary">${icon("search", "icon-sm")}<span>Apply filters</span></button>
+            ${owner ? `<label class="check" style="grid-column:1/-1"><input type="checkbox" name="archived" value="1" ${showArchived ? "checked" : ""} /><span>Show archived products</span></label>` : ""}
+          </form>
+
+          <section class="card" style="padding:8px" aria-label="Product list">
+            <h2 class="muted small" style="font-weight:400;padding:8px 12px 4px">${showArchived ? `${list.length} products, including archived` : `${list.length} of ${App.activeProducts().length} products`}</h2>
+            ${list.length ? `<ul class="rows">${rows}</ul>` : `<p class="empty" style="padding:16px 12px">No products match these filters.</p>`}
+          </section>
+        </div>`;
+      }
+
+      App.mount({ active: "products", capability: "products.read", render });
+    </script>
+  </body>
+</html>

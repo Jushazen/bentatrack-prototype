@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reports · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // Owner only. Sales reports by day, week, month or year: totals, a bar chart, best sellers
+      // and the Cash/GCash split. "Day" is worked out from today's recorded sales and refunds;
+      // week, month and year use made-up figures (always the same for a period).
+      const { esc, peso, icon } = App;
+
+      const PERIODS = {
+        day: { label: "Today", chart: "Net sales by hour", ticks: ["9 AM", "10", "11", "12 PM", "1", "2", "3", "4", "5", "6", "7"], scale: 1 },
+        week: { label: "This week", chart: "Net sales by day", ticks: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], scale: 9 },
+        month: { label: "This month", chart: "Net sales by day", ticks: Array.from({ length: 30 }, (_, i) => String(i + 1)), scale: 4 },
+        year: { label: "This year", chart: "Net sales by month", ticks: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], scale: 30 },
+      };
+
+      // Small seeded random numbers, so each period always shows the same sample figures.
+      function seeded(seed) {
+        let s = seed;
+        return () => {
+          s = (s * 16807) % 2147483647;
+          return s / 2147483647;
+        };
+      }
+
+      /** Today's report from the recorded sales and refunds. */
+      function todayFigures() {
+        const config = PERIODS.day;
+        const buckets = config.ticks.map((tick) => ({ tick, value: 0 }));
+        const bucketFor = (time) => buckets[Math.min(Math.max(Number(time.slice(0, 2)) - 9, 0), buckets.length - 1)];
+        let gross = 0, profit = 0, items = 0, discounts = 0, cash = 0;
+        const best = {};
+        for (const sale of SALES.filter((s) => s.day === 0)) {
+          const t = App.saleTotals(sale);
+          const share = t.total / (t.subtotal || 1); // what was paid per peso of price, after the discount
+          gross += t.total;
+          discounts += t.discount;
+          if (sale.payment === "CASH") cash += t.total;
+          bucketFor(sale.time).value += t.total;
+          for (const l of t.lines) {
+            items += l.qty;
+            if (l.product.cost !== null) profit += Math.round(l.qty * (l.unitPrice * share - l.product.cost));
+            const entry = (best[l.productId] ||= { name: l.product.name, units: 0, revenue: 0 });
+            entry.units += l.qty;
+            entry.revenue += Math.round(l.amount * share);
+          }
+        }
+        let refunds = 0;
+        for (const refund of REFUNDS.filter((r) => r.day === 0)) {
+          const sale = SALES.find((s) => s.id === refund.saleId);
+          const t = App.saleTotals(sale);
+          for (const item of refund.items) {
+            const line = t.lines.find((l) => l.productId === item.productId);
+            refunds += Math.round((item.qty * line.unitPrice * t.total) / (t.subtotal || 1));
+          }
+        }
+        return {
+          series: buckets,
+          net: gross - refunds,
+          profit,
+          items,
+          refunds,
+          discounts,
+          cashShare: gross ? cash / gross : 0,
+          gcashShare: gross ? 1 - cash / gross : 0,
+          best: Object.values(best).sort((a, b) => b.units - a.units || b.revenue - a.revenue).slice(0, 5),
+        };
+      }
+
+      function figures(period) {
+        if (period === "day") return todayFigures();
+        const config = PERIODS[period];
+        const random = seeded(period.length * 7919);
+        const series = config.ticks.map((tick, i) => {
+          // Weekends and late afternoons sell more; future months of the year are empty.
+          let base = 120000 + random() * 380000;
+          if (period === "week" && i >= 5) base *= 1.6;
+          if (period === "year" && i > new Date().getMonth()) base = 0;
+          return { tick, value: Math.round((base * config.scale) / 100) * 100 };
+        });
+        const net = series.reduce((s, x) => s + x.value, 0);
+        const pesos = (centavos) => Math.round(centavos / 100) * 100; // whole pesos look tidier
+        return {
+          series,
+          net,
+          profit: pesos(net * 0.47),
+          items: Math.round(net / 26000),
+          refunds: pesos(net * 0.012),
+          discounts: pesos(net * 0.03),
+          cashShare: 0.58 + random() * 0.1,
+          best: [
+            ["Silk Hair Clip – Blush", 0.16],
+            ["Abaca Tote – Natural", 0.12],
+            ["Vanilla Musk Roll-on 10 ml", 0.09],
+            ["Pearl Drop Earrings", 0.08],
+            ["Ilang-Ilang Body Mist 100 ml", 0.06],
+          ].map(([name, share]) => ({ name, revenue: pesos(net * share), units: Math.max(1, Math.round((net * share) / 30000)) })),
+        };
+      }
+
+      function render() {
+        const period = PERIODS[App.params().get("period")] ? App.params().get("period") : "week";
+        const config = PERIODS[period];
+        const f = figures(period);
+        const max = Math.max(...f.series.map((x) => x.value), 1);
+        const showEvery = f.series.length > 12 ? 5 : 1;
+        const stat = (label, value, note) =>
+          `<div class="stat"><dt>${label}</dt><dd class="value">${value}</dd>${note ? `<dd class="note">${note}</dd>` : ""}</div>`;
+
+        return `<div class="page">
+          <div class="page-head">
+            <div><h1>Sales reports</h1><p class="sub">${config.label} · Asia/Manila time, weeks start Monday</p></div>
+          </div>
+
+          <nav class="tabs-inline" aria-label="Report period">
+            ${Object.entries(PERIODS)
+              .map(([key, p]) => `<a href="reports.html?period=${key}" ${key === period ? 'aria-current="page"' : ""}>${{ day: "Day", week: "Week", month: "Month", year: "Year" }[key]}</a>`)
+              .join("")}
+          </nav>
+
+          <dl class="stats five" aria-label="Totals">
+            ${stat("Net sales", peso(f.net), "Sales less refunds given")}
+            ${stat("Gross profit", peso(f.profit), "Selling price less purchase price")}
+            ${stat("Items sold", f.items.toLocaleString("en-PH"))}
+            ${stat("Refunds given", peso(f.refunds))}
+            ${stat("Discounts given", peso(f.discounts))}
+          </dl>
+
+          <section class="card">
+            <h2>${config.chart}</h2>
+            <div class="bars" role="img" aria-label="${config.chart}">
+              ${f.series
+                .map(
+                  (x, i) => `<div class="bar" title="${x.tick}: ${peso(x.value)}">
+                    <div class="fill" style="height:${Math.round((x.value / max) * 100)}%"></div>
+                    <span class="tick">${i % showEvery === 0 ? x.tick : "&nbsp;"}</span></div>`,
+                )
+                .join("")}
+            </div>
+          </section>
+
+          <div class="grid-2">
+            <section class="card">
+              <h2>Best sellers</h2>
+              ${f.best.length ? "" : `<p class="muted" style="margin-top:8px">Nothing sold in this period yet.</p>`}
+              <ol class="rows" style="margin-top:8px">${f.best
+                .map(
+                  (b, i) => `<li class="row-link" style="margin:0"><span class="main" style="display:flex;gap:8px"><span class="muted num">${i + 1}.</span><span class="title">${esc(b.name)}</span></span>
+                  <span class="end"><span class="num" style="display:block">${b.units} sold</span><span class="meta num">${peso(b.revenue)}</span></span></li>`,
+                )
+                .join("")}</ol>
+            </section>
+            <section class="card stack">
+              <h2>Paid by</h2>
+              ${[
+                ["Cash", f.cashShare],
+                ["GCash", f.gcashShare ?? 1 - f.cashShare],
+              ]
+                .map(
+                  ([label, share]) => `<div><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span>${label}</span>
+                    <span class="num">${peso(Math.round((f.net * share) / 100) * 100)} · ${Math.round(share * 100)}%</span></div>
+                    <div class="meter"><span style="width:${share * 100}%"></span></div></div>`,
+                )
+                .join("")}
+            </section>
+          </div>
+        </div>`;
+      }
+
+      App.mount({ active: "reports", capability: "reports.read", render });
+    </script>
+  </body>
+</html>

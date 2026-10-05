@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Inventory history · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // Every stock change (sale, restock, edit, refund, archive, restore), newest first, with who
+      // made it and how many were left afterwards.
+      const { esc, icon, when } = App;
+      const TYPES = { SALE: "Sale", RESTOCK: "Restock", EDIT: "Edit", REFUND: "Refund", ARCHIVE: "Archive", RESTORE: "Restore" };
+
+      function render() {
+        const params = App.params();
+        const type = params.get("type") || "";
+        const productId = params.get("product") || "";
+        const product = App.product(productId);
+        const log = App.inventoryLog().filter((e) => (!type || e.type === type) && (!productId || e.productId === productId));
+        const option = (value, label) => `<option value="${value}" ${value === type ? "selected" : ""}>${label}</option>`;
+
+        const rows = log
+          .map(
+            (e) => `<tr>
+              <td style="white-space:nowrap">${when(e.day, e.time)}</td>
+              <td><span class="badge ${e.type === "RESTOCK" || e.type === "REFUND" ? "ok" : e.type === "ARCHIVE" ? "warn" : ""}">${TYPES[e.type]}</span></td>
+              <td>${e.productId ? `<a class="link" href="product.html?id=${e.productId}">${esc(e.productName)}</a>` : esc(e.productName)}<div class="muted small">${esc(e.productCode)}</div></td>
+              <td class="num ${e.delta > 0 ? "text-ok" : ""}">${e.delta > 0 ? "+" : ""}${e.delta}</td>
+              <td class="num">${e.stockAfter}</td>
+              <td>${esc(App.userName(e.by))}</td>
+              <td class="muted small">${e.link ? `<a class="link" href="${e.link}">${esc(e.note)}</a>` : esc(e.note || "")}</td>
+            </tr>`,
+          )
+          .join("");
+
+        return `<div class="page" style="max-width:72rem">
+          <div class="page-head">
+            <div><h1>Inventory history</h1><p class="sub">${product ? `Changes to ${esc(product.name)}` : "Every change to stock, newest first."}</p></div>
+            ${product ? `<a class="btn btn-secondary" href="inventory-history.html">${icon("x", "icon-sm")}<span>Show all products</span></a>` : ""}
+          </div>
+          <form class="card filters" method="get" action="inventory-history.html" style="grid-template-columns:repeat(auto-fit,minmax(12rem,1fr))">
+            ${productId ? `<input type="hidden" name="product" value="${esc(productId)}" />` : ""}
+            <div class="field"><label class="label" for="type">Type of change</label>
+              <select class="input" id="type" name="type">${option("", "All changes")}${Object.entries(TYPES).map(([k, v]) => option(k, v)).join("")}</select></div>
+            <button type="submit" class="btn btn-secondary" style="align-self:end">${icon("search", "icon-sm")}<span>Show</span></button>
+          </form>
+          <section class="card table-wrap">
+            ${
+              log.length
+                ? `<table class="table" style="min-width:52rem"><thead><tr><th>When</th><th>Type</th><th>Product</th><th class="num">Qty</th><th class="num">Left after</th><th>By</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table>`
+                : `<p class="empty">No changes match.</p>`
+            }
+          </section>
+        </div>`;
+      }
+
+      App.mount({ active: "inventory-history", capability: "inventory.history", render });
+    </script>
+  </body>
+</html>

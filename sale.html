@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sale · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // One sale: its items, totals and payment, past refunds, and the refund form. A refund can
+      // cover part or all of the sale; the amount is each unit's share of what was paid.
+      const { esc, peso, icon, when } = App;
+      const sale = SALES.find((s) => s.id === App.params().get("id")) || SALES[0];
+      let totals = App.saleTotals(sale);
+
+      function render() {
+        const t = totals;
+        const discountText = sale.discount
+          ? sale.discount.type === "PERCENT"
+            ? `${sale.discount.value}% (-${peso(t.discount)})`
+            : `-${peso(t.discount)}`
+          : "None";
+        const refundable = t.lines.filter((l) => l.qty - (t.refundedQty[l.productId] || 0) > 0);
+
+        return `<div class="page">
+          <div>
+            <a class="back-link" href="sales.html">${icon("arrowLeft", "icon-sm")}<span>All sales</span></a>
+            <div class="page-head">
+              <div><h1>Sale #${sale.id}</h1><p class="sub">${when(sale.day, sale.time)} · By ${esc(App.userName(sale.by))}</p></div>
+            </div>
+          </div>
+
+          <div class="grid-2" style="align-items:start">
+            <div class="stack">
+              <section class="card">
+                <h2>Items</h2>
+                <div class="table-wrap"><table class="table" style="margin-top:8px">
+                  <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
+                  <tbody>${t.lines
+                    .map(
+                      (l) => `<tr><td><a class="link" href="product.html?id=${l.productId}">${esc(l.product.name)}</a>
+                        <div class="muted small">${l.product.code}${t.refundedQty[l.productId] ? ` · <span class="text-warn">${t.refundedQty[l.productId]} refunded</span>` : ""}</div></td>
+                        <td class="num">${l.qty}</td><td class="num">${peso(l.unitPrice)}</td><td class="num">${peso(l.amount)}</td></tr>`,
+                    )
+                    .join("")}</tbody>
+                </table></div>
+              </section>
+              <section class="card">
+                <h2>Totals</h2>
+                <dl class="details">
+                  <div><dt>Subtotal</dt><dd class="num">${peso(t.subtotal)}</dd></div>
+                  <div><dt>Discount</dt><dd class="num">${discountText}</dd></div>
+                  <div><dt>Total</dt><dd class="num">${peso(t.total)}</dd></div>
+                  <div><dt>Paid by</dt><dd>${App.PAYMENT_LABEL[sale.payment]}</dd></div>
+                  <div><dt>Customer</dt><dd>${sale.customer ? esc(sale.customer) : "None"}</dd></div>
+                  ${t.refunded ? `<div><dt>Refunded</dt><dd class="num text-warn">-${peso(t.refunded)}</dd></div>` : ""}
+                </dl>
+              </section>
+              ${
+                t.refunds.length
+                  ? `<section class="card"><h2>Refunds</h2><ul class="rows">${t.refunds
+                      .map(
+                        (r) => `<li class="row-link" style="margin:0"><span class="main"><span class="title">${r.items
+                          .map((i) => `${i.qty} × ${esc(App.product(i.productId).name)}`)
+                          .join(", ")}</span><span class="meta">${when(r.day, r.time)} · By ${esc(App.userName(r.by))} · ${esc(r.reason)}${r.returnToStock ? " · Returned to stock" : ""}</span></span></li>`,
+                      )
+                      .join("")}</ul></section>`
+                  : ""
+              }
+            </div>
+
+            <section class="card">
+              <h2>Refund</h2>
+              ${
+                refundable.length
+                  ? `<p class="muted small" style="margin:4px 0 12px">Choose how many of each item the customer is returning.</p>
+                    <form id="refund" class="form-grid" novalidate>
+                      <fieldset class="choice" style="gap:0">
+                        <legend class="label">Items to refund</legend>
+                        ${refundable
+                          .map((l) => {
+                            const left = l.qty - (t.refundedQty[l.productId] || 0);
+                            return `<div style="display:grid;grid-template-columns:1fr 6rem;gap:12px;align-items:center;padding:8px 0">
+                              <label for="r-${l.productId}"><span style="display:block">${esc(l.product.name)}</span><span class="muted small">Up to ${left}</span></label>
+                              <input class="input" id="r-${l.productId}" type="number" min="0" max="${left}" step="1" value="0" data-refund="${l.productId}" data-max="${left}" />
+                            </div>`;
+                          })
+                          .join("")}
+                      </fieldset>
+                      <div class="field">
+                        <label class="label" for="reason">Reason</label>
+                        <select class="input" id="reason"><option>Changed mind</option><option>Wrong size</option><option>Damaged item</option><option>Other</option></select>
+                      </div>
+                      <label class="check"><input type="checkbox" id="restock-back" checked /><span>Return to stock</span></label>
+                      <p class="error" id="refund-error" hidden></p>
+                      <button type="submit" class="btn btn-primary" id="refund-button" disabled>${icon("undo", "icon-sm")}<span>Refund ₱0.00</span></button>
+                    </form>`
+                  : `<p class="muted">Everything in this sale has been refunded.</p>`
+              }
+            </section>
+          </div>
+        </div>`;
+      }
+
+      function refundAmount() {
+        let amount = 0;
+        let valid = true;
+        document.querySelectorAll("[data-refund]").forEach((input) => {
+          const qty = input.value === "" ? 0 : Number(input.value);
+          const max = Number(input.dataset.max);
+          const ok = Number.isInteger(qty) && qty >= 0 && qty <= max;
+          if (ok) input.removeAttribute("aria-invalid");
+          else input.setAttribute("aria-invalid", "true");
+          valid = valid && ok;
+          const price = totals.lines.find((l) => l.productId === input.dataset.refund).unitPrice;
+          if (ok) amount += Math.round((qty * price * totals.total) / totals.subtotal);
+        });
+        return { amount, valid };
+      }
+
+      function after() {
+        const form = document.getElementById("refund");
+        if (!form) return;
+        const button = document.getElementById("refund-button");
+        const error = document.getElementById("refund-error");
+        form.addEventListener("input", () => {
+          const { amount, valid } = refundAmount();
+          button.querySelector("span").textContent = `Refund ${peso(amount)}`;
+          button.disabled = !valid || amount === 0;
+          error.hidden = valid;
+          error.textContent = valid ? "" : "Each quantity must be a whole number, no more than was sold.";
+        });
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const { amount, valid } = refundAmount();
+          if (!valid || amount === 0) return;
+          const restock = document.getElementById("restock-back").checked;
+          const items = [...document.querySelectorAll("[data-refund]")]
+            .map((input) => ({ productId: input.dataset.refund, qty: Number(input.value || 0) }))
+            .filter((item) => item.qty > 0);
+          REFUNDS.push({
+            id: App.nextId(REFUNDS, "r"),
+            saleId: sale.id,
+            at: new Date().toISOString(),
+            by: App.currentUser().id,
+            reason: document.getElementById("reason").value,
+            returnToStock: restock,
+            items,
+          });
+          if (restock) for (const item of items) App.product(item.productId).stock += item.qty;
+          App.save();
+          // Redraw with the refund included, then confirm.
+          totals = App.saleTotals(sale);
+          document.getElementById("page").innerHTML = render();
+          after();
+          App.toast(`Refund of ${peso(amount)} recorded. Give this back to the customer.${restock ? " Items returned to stock." : ""}`);
+        });
+      }
+
+      App.mount({ active: "sales", capability: "sales.read", title: `Sale #${sale.id}`, render, after });
+    </script>
+  </body>
+</html>

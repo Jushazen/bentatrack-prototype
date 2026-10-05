@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sales · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // Every sale, newest first. Open one to see its items or give a refund.
+      const { esc, peso, plural, icon, when } = App;
+
+      function render() {
+        const params = App.params();
+        const day = params.get("day") || "";
+        const payment = params.get("payment") || "";
+        const list = SALES.filter((s) => (day === "" || String(s.day) === day) && (payment === "" || s.payment === payment));
+        const option = (value, label, current) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`;
+
+        const rows = list
+          .map((s) => {
+            const t = App.saleTotals(s);
+            const refundNote = t.refunded ? `<span class="badge warn">${peso(t.refunded)} refunded</span>` : "";
+            return `<li><a class="row-link" href="sale.html?id=${s.id}" style="margin:0;padding:12px">
+              <span class="main"><span class="title">Sale #${s.id} · ${plural(t.units, "item")} · ${App.PAYMENT_LABEL[s.payment]}</span>
+              <span class="meta">${when(s.day, s.time)} · By ${esc(App.userName(s.by))}${s.customer ? " · " + esc(s.customer) : ""}</span></span>
+              <span class="end"><strong class="num" style="display:block">${peso(t.total)}</strong>${refundNote}</span></a></li>`;
+          })
+          .join("");
+
+        return `<div class="page">
+          <div class="page-head">
+            <div><h1>Sales</h1><p class="sub">Every sale, newest first. Open one to give a refund.</p></div>
+            <a class="btn btn-primary" href="checkout.html">${icon("cart", "icon-sm")}<span>New sale</span></a>
+          </div>
+          <form class="card filters" method="get" action="sales.html" aria-label="Filter sales" style="grid-template-columns:repeat(auto-fit,minmax(12rem,1fr))">
+            <div class="field"><label class="label" for="day">Date</label>
+              <select class="input" id="day" name="day">${option("", "All dates", day)}${option("0", "Today", day)}${option("1", "Yesterday", day)}${option("2", "2 days ago", day)}</select></div>
+            <div class="field"><label class="label" for="payment">Payment</label>
+              <select class="input" id="payment" name="payment">${option("", "Cash and GCash", payment)}${option("CASH", "Cash", payment)}${option("GCASH", "GCash", payment)}</select></div>
+            <button type="submit" class="btn btn-secondary" style="align-self:end">${icon("search", "icon-sm")}<span>Show</span></button>
+          </form>
+          <section class="card" style="padding:8px" aria-label="Sales">
+            ${list.length ? `<ul class="rows">${rows}</ul>` : `<p class="empty" style="padding:16px 12px">No sales match these filters.</p>`}
+          </section>
+        </div>`;
+      }
+
+      App.mount({ active: "sales", capability: "sales.read", render });
+    </script>
+  </body>
+</html>

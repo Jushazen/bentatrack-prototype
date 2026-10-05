@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dashboard · BentaTrack prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </head>
+  <body>
+    <script>
+      // Owner: today's totals, stock totals, recent sales, low stock, best sellers, needs cost.
+      // Staff: today's totals, recent sales and low stock only.
+      const { esc, peso, plural, icon, when } = App;
+
+      function stat(label, value, note) {
+        return `<div class="stat"><dt>${label}</dt><dd class="value">${value}</dd>${note ? `<dd class="note">${note}</dd>` : ""}</div>`;
+      }
+
+      function panel(title, link, body) {
+        return `<section class="card">
+          <div class="card-head"><h2>${title}</h2>${link || ""}</div>
+          ${body}
+        </section>`;
+      }
+
+      function panelLink(href, text) {
+        return `<a class="btn btn-ghost btn-sm" href="${href}"><span>${text}</span>${icon("arrowRight", "icon-sm")}</a>`;
+      }
+
+      function render() {
+        const owner = App.role() === "OWNER";
+        const todaySales = SALES.filter((s) => s.day === 0).map((s) => ({ sale: s, t: App.saleTotals(s) }));
+        const todayRefunds = REFUNDS.filter((r) => r.day === 0);
+        const gross = todaySales.reduce((sum, x) => sum + x.t.total, 0);
+        const refunded = todaySales.reduce((sum, x) => sum + x.t.refunded, 0);
+        const items = todaySales.reduce((sum, x) => sum + x.t.units, 0);
+        const low = App.lowStock();
+
+        const today = `<dl class="stats" aria-label="Today's sales">
+          ${stat("Today's sales", peso(gross - refunded), refunded ? `${peso(refunded)} refunded` : "After refunds")}
+          ${stat("Sales made today", todaySales.length)}
+          ${stat("Items sold today", items)}
+          ${stat("Low or out of stock", low.length, low.length === 1 ? "product" : "products")}
+        </dl>`;
+
+        const products = App.activeProducts();
+        const stock = `<dl class="stats" aria-label="Stock">
+          ${stat("Total products", products.length)}
+          ${stat("Items in stock", products.reduce((sum, p) => sum + p.stock, 0))}
+          ${stat("Out of stock", products.filter((p) => p.stock === 0).length)}
+          ${stat("Needs cost", products.filter((p) => p.cost === null).length, "Left out of profit until a purchase price is added")}
+        </dl>`;
+
+        const recent = panel(
+          "Recent sales",
+          panelLink("sales.html", "All sales"),
+          `<ul class="rows">${SALES.slice(0, 5)
+            .map((s) => {
+              const t = App.saleTotals(s);
+              return `<li><a class="row-link" href="sale.html?id=${s.id}">
+                <span class="main"><span class="title" style="font-weight:400">${plural(t.units, "item")} · ${App.PAYMENT_LABEL[s.payment]}</span>
+                <span class="meta">${when(s.day, s.time)} · By ${esc(App.userName(s.by))}</span></span>
+                <span class="end num"><strong>${peso(t.total)}</strong></span></a></li>`;
+            })
+            .join("")}</ul>`,
+        );
+
+        const lowPanel = panel(
+          "Low stock",
+          low.length ? panelLink("products.html?stock=low", "View all") : "",
+          low.length
+            ? `<ul class="rows">${low
+                .slice(0, 6)
+                .map(
+                  (p) => `<li><a class="row-link" href="product.html?id=${p.id}">
+                  <span class="main"><span class="title">${esc(p.name)}</span><span class="meta">${p.stock} left · alert at ${p.threshold}</span></span>
+                  <span class="end">${App.statusBadge(p)}</span></a></li>`,
+                )
+                .join("")}</ul>`
+            : `<p class="muted">Everything is well stocked.</p>`,
+        );
+
+        // Best sellers this month, from the recorded sales (refunded units don't count).
+        const now = new Date();
+        const sold = {};
+        for (const sale of SALES) {
+          const at = new Date(sale.at);
+          if (at.getMonth() !== now.getMonth() || at.getFullYear() !== now.getFullYear()) continue;
+          const t = App.saleTotals(sale);
+          for (const l of t.lines) {
+            const units = l.qty - (t.refundedQty[l.productId] || 0);
+            if (units <= 0) continue;
+            const entry = (sold[l.productId] ||= { units: 0, revenue: 0 });
+            entry.units += units;
+            entry.revenue += Math.round((units * l.unitPrice * t.total) / (t.subtotal || 1));
+          }
+        }
+        const best = Object.entries(sold)
+          .sort((a, b) => b[1].units - a[1].units || b[1].revenue - a[1].revenue)
+          .slice(0, 5)
+          .map(([id, x]) => [App.product(id).name, x.units, x.revenue]);
+        const bestPanel = panel(
+          "Best sellers, this month",
+          panelLink("reports.html?period=month", "Monthly report"),
+          best.length === 0
+            ? `<p class="muted">Nothing sold this month yet.</p>`
+            : `<ol class="rows">${best
+            .map(
+              ([name, units, revenue], i) => `<li class="row-link" style="margin:0">
+              <span class="main" style="display:flex;gap:8px"><span class="muted num">${i + 1}.</span><span class="title">${esc(name)}</span></span>
+              <span class="end"><span class="num" style="display:block">${units} sold</span><span class="meta num">${peso(revenue)}</span></span></li>`,
+            )
+            .join("")}</ol>`,
+        );
+
+        const needsCost = products.filter((p) => p.cost === null);
+        const costPanel = panel(
+          "Needs cost",
+          "",
+          needsCost.length
+            ? `<p class="muted small">Added without a purchase price, so profit leaves them out.</p>
+              <ul class="rows">${needsCost
+                .map((p) => `<li><a class="row-link" href="product-form.html?id=${p.id}"><span class="main"><span class="title">${esc(p.name)}</span><span class="meta">${p.code}</span></span></a></li>`)
+                .join("")}</ul>`
+            : `<p class="muted">Every product has a purchase price.</p>`,
+        );
+
+        return `<div class="page">
+          <div class="page-head">
+            <div><h1>Dashboard</h1><p class="sub">Today, ${App.longDayFormat.format(new Date())}</p></div>
+            <div class="btn-row">
+              <a class="btn btn-primary" href="checkout.html">${icon("cart", "icon-sm")}<span>New sale</span></a>
+              ${
+                owner
+                  ? `<a class="btn btn-secondary" href="reports.html">${icon("chart", "icon-sm")}<span>Sales reports</span></a>`
+                  : `<a class="btn btn-secondary" href="product-form.html">${icon("packagePlus", "icon-sm")}<span>Add product</span></a>`
+              }
+            </div>
+          </div>
+          ${today}
+          ${owner ? stock : ""}
+          <div class="grid-2">
+            ${recent}
+            ${lowPanel}
+            ${owner ? bestPanel + costPanel : ""}
+          </div>
+        </div>`;
+      }
+
+      App.mount({ active: "dashboard", capability: "sales.read", render });
+    </script>
+  </body>
+</html>
